@@ -1,0 +1,5 @@
+{
+  "name": "Gadget Addiction & Behavioral Analytics System",
+  "description": "A production-ready academic research platform for predicting gadget addiction using Machine Learning logic (Random Forest/SVM) derived from behavioral data.",
+  "requestFramePermissions": []
+}
