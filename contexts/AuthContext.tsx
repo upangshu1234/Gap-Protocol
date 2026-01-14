@@ -1,4 +1,15 @@
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signOut,
+  User as FirebaseUser
+} from 'firebase/auth';
+import { auth } from '../services/firebase';
 
 interface User {
   id: string;
@@ -14,7 +25,7 @@ interface AuthContextType {
   login: (email: string, pass: string) => Promise<void>;
   signup: (email: string, pass: string) => Promise<void>;
   googleLogin: () => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -24,62 +35,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check for existing session
-    const storedUser = localStorage.getItem('gap_auth_user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-    setLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        const newUser: User = {
+          id: firebaseUser.uid,
+          email: firebaseUser.email || '',
+          name: firebaseUser.displayName || firebaseUser.email?.split('@')[0],
+          provider: firebaseUser.providerData[0]?.providerId === 'google.com' ? 'google' : 'email',
+          createdAt: firebaseUser.metadata.creationTime ? new Date(firebaseUser.metadata.creationTime).getTime() : Date.now()
+        };
+        setUser(newUser);
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const login = async (email: string, pass: string) => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Mock Validation
-    if (pass.length < 6) throw new Error("Invalid credentials");
-    
-    const newUser: User = {
-      id: Math.random().toString(36).substr(2, 9),
-      email,
-      name: email.split('@')[0],
-      provider: 'email',
-      createdAt: Date.now()
-    };
-    
-    setUser(newUser);
-    localStorage.setItem('gap_auth_user', JSON.stringify(newUser));
+    await signInWithEmailAndPassword(auth, email, pass);
   };
 
   const signup = async (email: string, pass: string) => {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    const newUser: User = {
-      id: Math.random().toString(36).substr(2, 9),
-      email,
-      name: email.split('@')[0],
-      provider: 'email',
-      createdAt: Date.now()
-    };
-    setUser(newUser);
-    localStorage.setItem('gap_auth_user', JSON.stringify(newUser));
+    await createUserWithEmailAndPassword(auth, email, pass);
   };
 
   const googleLogin = async () => {
-    await new Promise(resolve => setTimeout(resolve, 1200));
-    const newUser: User = {
-      id: Math.random().toString(36).substr(2, 9),
-      email: "demo.user@gmail.com",
-      name: "Demo User",
-      provider: 'google',
-      createdAt: Date.now()
-    };
-    setUser(newUser);
-    localStorage.setItem('gap_auth_user', JSON.stringify(newUser));
+    const provider = new GoogleAuthProvider();
+    await signInWithPopup(auth, provider);
   };
 
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('gap_auth_user');
+  const logout = async () => {
+    await signOut(auth);
     localStorage.removeItem('gadgetAssessmentProgress'); // Clean up assessment data on logout
   };
 

@@ -34,23 +34,21 @@ const AppContent: React.FC = () => {
     setCurrentPage('assessment');
   };
 
-  const handleAssessmentComplete = (data: AssessmentData, result: PredictionResult) => {
-    // 1. Update Local State for UI
+  const handleAssessmentComplete = async (data: AssessmentData, result: PredictionResult) => {
+    // 1. Update Local State for UI immediately
     setAssessmentData(data);
     setPredictionResult(result);
+    setCurrentPage('results');
     
-    // 2. Persist to Long-Term Storage
+    // 2. Persist to Supabase
     if (user && user.id) {
         try {
-            saveProgress(user.id, data, result);
+            await saveProgress(user.id, data, result);
             console.log("Progress saved successfully for user:", user.id);
         } catch (error) {
             console.error("Failed to save progress:", error);
         }
     }
-
-    // 3. Navigate
-    setCurrentPage('results');
   };
 
   const handleRetake = () => {

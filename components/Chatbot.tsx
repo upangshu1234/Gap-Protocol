@@ -1,21 +1,29 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, Chat } from "@google/genai";
-import { X, Send, Loader2, Star, Shield } from 'lucide-react';
+import { X, Send, Loader2, Bot, MessageSquare } from 'lucide-react';
+import { saveChatMessage } from '../services/storageService';
+import { useAuth } from '../contexts/AuthContext';
 
 export const Chatbot: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
+  const { user } = useAuth();
+  
+  // --- NORMAL UI CONFIGURATION ---
+  const AVATAR_CONFIG = {
+    // Using a generic abstract bot avatar or simple UI avatar
+    avatarImageSource: "https://ui-avatars.com/api/?name=AI&background=4f46e5&color=fff&rounded=true&bold=true",
+    assistantName: "Health Assistant"
+  };
+
   const [messages, setMessages] = useState<{ role: 'user' | 'model'; text: string }[]>([
-    { role: 'model', text: "I'm the only one who can save you from yourself. \n\nWhat's the problem? Too much screen time? Let's fix it." }
+    { role: 'model', text: "Hello. I'm your behavioral health assistant. How can I help you manage your digital habits today?" }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatSessionRef = useRef<Chat | null>(null);
-
-  // Using a stable URL for Homelander. 
-  // referrerPolicy="no-referrer" is used in img tags to bypass basic hotlink protection.
-  const HOMELANDER_IMG = "https://static.wikia.nocookie.net/the-boys/images/d/d4/Homelander_-_S4_Promotional_Photo.jpg"; 
+  const sessionIdRef = useRef<string>(crypto.randomUUID());
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -29,12 +37,31 @@ export const Chatbot: React.FC = () => {
      if (!process.env.API_KEY) return;
      try {
        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+       
+       // --- STANDARD PERSONA PROMPT ---
+       const SYSTEM_INSTRUCTION = `
+You are a helpful, professional, and empathetic AI behavioral health assistant integrated into a Gadget Addiction Prediction system.
+
+Your Role:
+- Provide supportive, science-backed advice on digital wellness, screen time reduction, and healthy habit formation.
+- Answer questions about the assessment results and metrics.
+- Be encouraging but realistic.
+
+Guidelines:
+- Keep responses concise and easy to read.
+- Use a polite and professional tone.
+- Do not provide medical diagnoses.
+- If a user seems distressed, suggest professional help politely.
+       `;
+
        chatSessionRef.current = ai.chats.create({
           model: 'gemini-3-flash-preview',
           config: {
-              systemInstruction: "You are Homelander from The Boys. You are the world's greatest superhero, and you know it. You are talking to a regular human about their pathetic gadget addiction. You are authoritative, narcissistic, slightly condescending, but you frame it as 'saving' them. You are NOT a doctor, you are better—you are a Hero. Do not use medical jargon, use commands and authoritative advice. If they are weak, tell them to be stronger. Use phrases like 'I'm the real hero', 'You guys are the real heroes (sarcastically)', or 'Look at me'. Keep it short and punchy."
+              systemInstruction: SYSTEM_INSTRUCTION.trim()
           }
        });
+       
+       // Log system initialization if needed, but usually we just log user/model interactions
      } catch (e) {
        console.error("Failed to initialize chat", e);
      }
@@ -53,7 +80,7 @@ export const Chatbot: React.FC = () => {
     if (!chatSessionRef.current) {
         initChat();
         if (!chatSessionRef.current) {
-             setMessages(prev => [...prev, { role: 'model', text: "Systems are down. Even I can't fix bad code." }]);
+             setMessages(prev => [...prev, { role: 'model', text: "Service unavailable. Please check your API key." }]);
              return;
         }
     }
@@ -62,6 +89,11 @@ export const Chatbot: React.FC = () => {
     setInput('');
     setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setIsLoading(true);
+
+    // Persist User Message
+    if (user?.id) {
+        saveChatMessage(user.id, 'user', userMsg, sessionIdRef.current);
+    }
 
     try {
         setMessages(prev => [...prev, { role: 'model', text: '' }]);
@@ -80,12 +112,18 @@ export const Chatbot: React.FC = () => {
                 });
             }
         }
+        
+        // Persist Model Response
+        if (user?.id) {
+            saveChatMessage(user.id, 'model', fullResponse, sessionIdRef.current);
+        }
+
     } catch (error) {
         console.error("Chat error", error);
         setMessages(prev => {
             const newMsgs = [...prev];
             if (newMsgs[newMsgs.length - 1].text === '') {
-                newMsgs[newMsgs.length - 1].text = "I'm done talking right now. Try again later.";
+                newMsgs[newMsgs.length - 1].text = "I'm having trouble connecting right now. Please try again.";
             }
             return newMsgs;
         });
@@ -97,82 +135,51 @@ export const Chatbot: React.FC = () => {
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end print:hidden font-sans">
       {isOpen && (
-        <div className="mb-4 w-[350px] sm:w-[380px] h-[550px] bg-slate-50 rounded-lg shadow-2xl flex flex-col overflow-hidden animate-fadeIn origin-bottom-right border-2 border-slate-900">
+        <div className="mb-4 w-[350px] sm:w-[380px] h-[550px] bg-slate-50 rounded-xl shadow-2xl flex flex-col overflow-hidden animate-fadeIn origin-bottom-right border border-slate-200 dark:border-slate-800">
           
-          {/* Vought Header */}
-          <div className="relative bg-[#0f172a] p-0 overflow-hidden shrink-0">
-            {/* American Flag Motif Background */}
-            <div className="absolute inset-0 opacity-20 bg-[repeating-linear-gradient(45deg,transparent,transparent_10px,#ef4444_10px,#ef4444_20px)]"></div>
-            
-            <div className="relative z-10 p-4 flex justify-between items-center bg-gradient-to-r from-blue-900/90 to-slate-900/95">
-                <div className="flex items-center">
-                <div className="relative group cursor-pointer">
-                    <div className="w-14 h-14 rounded-full border-2 border-[#fbbf24] overflow-hidden shadow-lg bg-slate-800 ring-2 ring-white/10 transition-transform duration-500 group-hover:scale-105">
-                        <img 
-                            src={HOMELANDER_IMG} 
-                            alt="Homelander" 
-                            referrerPolicy="no-referrer"
-                            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                            onError={(e) => {
-                                (e.target as HTMLImageElement).src = 'https://ui-avatars.com/api/?name=Homelander&background=0B1120&color=fbbf24';
-                            }}
-                        />
-                    </div>
-                    <div className="absolute -bottom-1 -right-1 bg-[#fbbf24] text-blue-900 rounded-full p-1 border border-white shadow-sm z-10">
-                        <Star className="w-3 h-3 fill-current" />
-                    </div>
+          {/* Standard Header */}
+          <div className="bg-indigo-600 p-4 flex justify-between items-center shadow-md shrink-0">
+            <div className="flex items-center space-x-3">
+                <div className="bg-white/10 p-2 rounded-lg">
+                    <Bot className="w-6 h-6 text-white" />
                 </div>
-                <div className="ml-3">
-                    <h3 className="font-black text-white text-lg tracking-wide uppercase italic" style={{textShadow: '0 2px 4px rgba(0,0,0,0.5)'}}>
-                        HOMELANDER
+                <div>
+                    <h3 className="font-bold text-white text-base">
+                        {AVATAR_CONFIG.assistantName}
                     </h3>
-                    <p className="text-[10px] text-[#fbbf24] font-bold tracking-widest uppercase flex items-center">
-                        <Shield className="w-3 h-3 mr-1" /> Vought International
+                    <p className="text-[10px] text-indigo-200 font-medium flex items-center">
+                        <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full mr-1.5 animate-pulse"></span> Online
                     </p>
                 </div>
-                </div>
-                <button 
-                onClick={() => setIsOpen(false)}
-                className="text-slate-400 hover:text-white hover:bg-white/10 p-2 rounded-full transition-colors"
-                >
-                <X className="w-6 h-6" />
-                </button>
             </div>
-            {/* Gold Bar */}
-            <div className="h-1 w-full bg-[#fbbf24]"></div>
+            <button 
+              onClick={() => setIsOpen(false)}
+              className="text-indigo-100 hover:text-white hover:bg-white/10 p-2 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
 
           {/* Messages Area */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-5 bg-slate-100 scrollbar-thin scrollbar-thumb-slate-300">
-            <div className="text-center text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
-                Today
-            </div>
-            
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 dark:bg-slate-900 scrollbar-thin scrollbar-thumb-slate-300">
             {messages.map((msg, idx) => (
               <div 
                 key={idx} 
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start items-end'}`}
               >
                 {msg.role === 'model' && (
-                     <div className="flex-shrink-0 mr-3 mb-1 group relative">
-                         <div className="absolute -inset-0.5 bg-gradient-to-tr from-blue-600 to-[#b91c1c] rounded-full opacity-0 group-hover:opacity-100 transition duration-500 blur-sm"></div>
-                         <img 
-                            src={HOMELANDER_IMG}
-                            alt="H"
-                            referrerPolicy="no-referrer"
-                            className="relative w-10 h-10 rounded-full border-2 border-white shadow-lg ring-2 ring-slate-200/50 object-cover bg-slate-800 transition-all duration-300 group-hover:scale-110 group-hover:shadow-blue-900/30 cursor-help"
-                            onError={(e) => {
-                                (e.target as HTMLImageElement).src = 'https://ui-avatars.com/api/?name=H&background=0B1120&color=fff';
-                            }}
-                         />
+                     <div className="flex-shrink-0 mr-2 mb-1">
+                         <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center border border-indigo-200 dark:border-indigo-800">
+                            <Bot className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                         </div>
                      </div>
                 )}
                 
                 <div 
-                  className={`max-w-[80%] px-4 py-3 text-sm font-medium shadow-sm relative ${
+                  className={`max-w-[85%] px-4 py-2.5 text-sm shadow-sm ${
                     msg.role === 'user' 
-                      ? 'bg-white text-slate-800 rounded-2xl rounded-tr-none border border-slate-200' 
-                      : 'bg-[#1e3a8a] text-white rounded-2xl rounded-tl-none border-b-2 border-[#b91c1c]'
+                      ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-none' 
+                      : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-2xl rounded-tl-none border border-slate-200 dark:border-slate-700'
                   }`}
                 >
                   <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
@@ -181,18 +188,15 @@ export const Chatbot: React.FC = () => {
             ))}
             {isLoading && (
                 <div className="flex justify-start items-end">
-                     <div className="flex-shrink-0 mr-3 mb-1">
-                         <img 
-                            src={HOMELANDER_IMG}
-                            referrerPolicy="no-referrer"
-                            className="w-10 h-10 rounded-full border-2 border-white shadow-lg ring-2 ring-slate-200/50 mr-2 mb-1 object-cover bg-slate-800 animate-pulse"
-                            onError={(e) => (e.target as HTMLImageElement).src = ''}
-                         />
+                     <div className="flex-shrink-0 mr-2 mb-1">
+                        <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center">
+                            <Bot className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                         </div>
                      </div>
-                     <div className="bg-[#1e3a8a] px-4 py-3 rounded-2xl rounded-tl-none flex items-center space-x-1">
-                        <div className="w-1.5 h-1.5 bg-white rounded-full animate-bounce"></div>
-                        <div className="w-1.5 h-1.5 bg-white rounded-full animate-bounce delay-100"></div>
-                        <div className="w-1.5 h-1.5 bg-white rounded-full animate-bounce delay-200"></div>
+                     <div className="bg-white dark:bg-slate-800 px-4 py-3 rounded-2xl rounded-tl-none border border-slate-200 dark:border-slate-700 flex items-center space-x-1">
+                        <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></div>
+                        <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-100"></div>
+                        <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-200"></div>
                      </div>
                 </div>
             )}
@@ -200,63 +204,47 @@ export const Chatbot: React.FC = () => {
           </div>
 
           {/* Input Area */}
-          <form onSubmit={handleSend} className="p-3 bg-white border-t border-slate-200 flex items-center gap-2">
+          <form onSubmit={handleSend} className="p-3 bg-white dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2">
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Speak up..."
-              className="flex-1 bg-slate-50 border border-slate-200 text-slate-900 text-sm font-medium rounded-md px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-900 focus:border-transparent transition-all placeholder:text-slate-400"
+              placeholder="Ask for advice..."
+              className="flex-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-sm rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all placeholder:text-slate-400"
               disabled={isLoading}
             />
             <button 
               type="submit"
               disabled={!input.trim() || isLoading}
-              className={`p-3 rounded-md flex items-center justify-center transition-all ${
+              className={`p-3 rounded-xl flex items-center justify-center transition-all ${
                 !input.trim() || isLoading 
-                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
-                 : 'bg-[#b91c1c] text-white hover:bg-red-700 shadow-lg shadow-red-200'
+                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed' 
+                 : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200 dark:shadow-none'
               }`}
             >
               {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5 fill-current" />}
             </button>
           </form>
           
-          {/* Powered by Vought Footer */}
-          <div className="bg-slate-900 py-1 text-center">
-             <p className="text-[9px] text-slate-500 uppercase tracking-[0.2em]">Powered by Vought OS</p>
-          </div>
         </div>
       )}
 
-      {/* Floating Action Button */}
+      {/* Standard Floating Action Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`group relative p-0 rounded-full shadow-2xl transition-all duration-300 hover:scale-105 border-4 border-white hover:border-red-500 hover:shadow-[0_0_25px_rgba(220,38,38,0.6)] ${
+        className={`group relative p-0 rounded-full shadow-xl transition-all duration-300 hover:scale-105 ${
             isOpen ? 'rotate-0' : ''
         }`}
       >
-        <div className="absolute inset-0 rounded-full bg-blue-900 animate-pulse opacity-20"></div>
-        <div className={`w-16 h-16 rounded-full overflow-hidden flex items-center justify-center relative z-10 ${isOpen ? 'bg-slate-800' : 'bg-blue-900'}`}>
+        <span className="absolute -top-1 -right-1 flex h-3 w-3">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+        </span>
+        <div className={`w-14 h-14 rounded-full flex items-center justify-center text-white transition-colors duration-300 ${isOpen ? 'bg-slate-800' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
             {isOpen ? (
-                <X className="w-8 h-8 text-white" />
+                <X className="w-6 h-6" />
             ) : (
-                <div className="relative w-full h-full">
-                     <img 
-                        src={HOMELANDER_IMG} 
-                        alt="Chat" 
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-125"
-                        onError={(e) => {
-                            (e.target as HTMLImageElement).src = 'https://ui-avatars.com/api/?name=H&background=0B1120&color=fbbf24';
-                        }}
-                     />
-                     {/* Notification Badge */}
-                     <span className="absolute top-0 right-0 flex h-4 w-4">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-4 w-4 bg-[#b91c1c] border-2 border-white"></span>
-                    </span>
-                </div>
+                <MessageSquare className="w-7 h-7 fill-current" />
             )}
         </div>
       </button>

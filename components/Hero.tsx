@@ -1,8 +1,9 @@
 
-import React from 'react';
-import { ArrowRight, ShieldAlert, Cpu, Activity, Skull, Zap, BarChart3, Fingerprint } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ArrowRight, ShieldAlert, Cpu, Activity, Skull, Zap, BarChart3, Fingerprint, Loader2 } from 'lucide-react';
 import { getLatestProgress } from '../services/storageService';
 import { useAuth } from '../contexts/AuthContext';
+import { ProgressEntry } from '../types';
 
 interface HeroProps {
   onStart: () => void;
@@ -10,7 +11,24 @@ interface HeroProps {
 
 export const Hero: React.FC<HeroProps> = ({ onStart }) => {
   const { user } = useAuth();
-  const lastProgress = user ? getLatestProgress(user.id) : null;
+  const [lastProgress, setLastProgress] = useState<ProgressEntry | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchProgress = async () => {
+      if (user?.id) {
+        try {
+          const progress = await getLatestProgress(user.id);
+          setLastProgress(progress);
+        } catch (error) {
+          console.error("Failed to fetch progress", error);
+        }
+      }
+      setLoading(false);
+    };
+
+    fetchProgress();
+  }, [user]);
 
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-slate-50 dark:bg-slate-950 transition-colors duration-300 p-4 md:p-8">
@@ -40,8 +58,8 @@ export const Hero: React.FC<HeroProps> = ({ onStart }) => {
                             onClick={onStart}
                             className="inline-flex items-center justify-center px-8 py-4 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-bold text-lg hover:translate-y-[-2px] hover:shadow-2xl transition-all duration-300"
                         >
-                            {lastProgress ? "Re-Assess Damage" : "Start Diagnostics"}
-                            <ArrowRight className="ml-2 w-5 h-5" />
+                            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (lastProgress ? "Re-Assess Damage" : "Start Diagnostics")}
+                            {!loading && <ArrowRight className="ml-2 w-5 h-5" />}
                         </button>
                         <button 
                             onClick={() => window.open('https://github.com/google/genai', '_blank')}
@@ -136,8 +154,8 @@ export const Hero: React.FC<HeroProps> = ({ onStart }) => {
         </div>
 
         {/* Last Result Banner */}
-        {lastProgress && (
-            <div className="bg-gradient-to-r from-slate-900 to-indigo-900 rounded-3xl p-8 relative overflow-hidden flex items-center justify-between">
+        {!loading && lastProgress && (
+            <div className="bg-gradient-to-r from-slate-900 to-indigo-900 rounded-3xl p-8 relative overflow-hidden flex items-center justify-between animate-fadeIn">
                 <div className="relative z-10">
                     <h2 className="text-2xl font-bold text-white mb-2">Previous Assessment Found</h2>
                     <p className="text-indigo-200">
