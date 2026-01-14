@@ -3,13 +3,13 @@ import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBNnASUnTl_WvYyn5hyyRr1RmWl0A-8SrE",
-  authDomain: "gadget-addiction.firebaseapp.com",
-  projectId: "gadget-addiction",
-  storageBucket: "gadget-addiction.firebasestorage.app",
-  messagingSenderId: "625192308034",
-  appId: "1:625192308034:web:5f8a7ab7014985505f4cdb",
-  measurementId: "G-1JKF6TMC9C"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 const app = initializeApp(firebaseConfig);
