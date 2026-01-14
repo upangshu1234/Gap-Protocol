@@ -1,26 +1,27 @@
-
-import { supabase } from './supabaseClient';
 import { AssessmentData, PredictionResult, ProgressEntry } from '../types';
 
-/**
- * Helper to log schema errors specifically for UUID/Text mismatch.
- */
-const handleDatabaseError = (error: any, context: string) => {
-    if (!error) return;
-    
-    // 22P02 is Postgres code for "invalid input syntax for type uuid"
-    // This happens if DB expects UUID but gets Firebase String UID
-    if (error.code === '22P02') {
-        console.error(`[CRITICAL SCHEMA ERROR] in ${context}: Database expects UUID but received text. Please run the provided SQL migration to change ID columns to TEXT.`);
-    } else {
-        console.error(`Error in ${context}:`, JSON.stringify(error, null, 2));
-    }
+// ============================================================================
+// GOOGLE FORMS CONFIGURATION
+// Write-only backend configuration.
+// ============================================================================
+const GOOGLE_FORM_CONFIG = {
+  FORM_URL: "https://docs.google.com/forms/d/e/1FAIpQLSeurfNtS2v5iVelha6rUaQR9Mdi4bmqvtYMLGZYKwhOgrjrzg/formResponse",
+
+  ENTRY_USER_ID: "entry.210620355",
+  ENTRY_TIMESTAMP: "entry.36374783",
+  ENTRY_INPUT_JSON: "entry.730137239",
+  ENTRY_PREDICTION_JSON: "entry.1621251062",
+  ENTRY_AI_JSON: "entry.2067402192"
 };
 
+const LOCAL_STORAGE_KEY_PREFIX = 'gap_history_';
+const CHAT_STORAGE_KEY_PREFIX = 'gap_chat_';
+
 /**
- * Saves a new assessment entry to Supabase.
- * - Inserts into 'progress_entries'
- * - If AI analysis exists, inserts into 'ai_recommendations'
+ * Saves a new assessment entry to Google Forms (Cloud) and LocalStorage (Device).
+ * 
+ * 1. Sends data to Google Forms via POST (no-cors).
+ * 2. Saves full JSON object to LocalStorage for immediate UI retrieval.
  */
 export const saveProgress = async (
   userId: string, 
@@ -33,161 +34,94 @@ export const saveProgress = async (
       return null;
   }
 
+  const timestamp = new Date().toISOString();
+  const entryId = crypto.randomUUID();
+
+  // 1. Prepare Data for Google Forms
+  const formData = new FormData();
+  formData.append(GOOGLE_FORM_CONFIG.ENTRY_USER_ID, userId);
+  formData.append(GOOGLE_FORM_CONFIG.ENTRY_TIMESTAMP, timestamp);
+  formData.append(GOOGLE_FORM_CONFIG.ENTRY_INPUT_JSON, JSON.stringify(data));
+  formData.append(GOOGLE_FORM_CONFIG.ENTRY_PREDICTION_JSON, JSON.stringify({ 
+      isAddicted: result.isAddicted,
+      probability: result.probability,
+      riskLevel: result.riskLevel,
+      anomalyDetected: result.anomalyDetected
+  }));
+  formData.append(GOOGLE_FORM_CONFIG.ENTRY_AI_JSON, JSON.stringify(result.aiAnalysis || {}));
+
   try {
-      // 1. Ensure profile exists (Upsert)
-      const { error: profileError } = await supabase
-        .from('users_profile')
-        .upsert({ id: userId, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      // 2. Submit to Google Forms (Fire and Forget)
+      await fetch(GOOGLE_FORM_CONFIG.FORM_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        body: formData
+      });
+      console.log("Data submitted to Google Form successfully.");
 
-      if (profileError) {
-          // If profile fails (e.g. foreign key issues), we log but try to continue if possible
-          console.warn('Profile upsert warning:', profileError.message);
-      }
-
-      // 2. Insert Progress Entry (Core Data)
-      const insertPayload = {
-        user_id: userId,
-        input_data: data,
-        prediction_result: { ...result, aiAnalysis: undefined } // Decouple AI data for storage
-      };
-
-      const { data: entryData, error: entryError } = await supabase
-        .from('progress_entries')
-        .insert([insertPayload])
-        .select()
-        .single();
-
-      if (entryError) {
-        handleDatabaseError(entryError, 'saveProgress (Insert Entry)');
-        return null;
-      }
-
-      if (!entryData) {
-         console.error('Error saving progress entry: No data returned');
-         return null;
-      }
-
-      // 3. Insert AI Recommendations (if available)
-      if (result.aiAnalysis) {
-          const { error: aiError } = await supabase
-            .from('ai_recommendations')
-            .insert([
-                {
-                    entry_id: entryData.id,
-                    analysis_payload: result.aiAnalysis
-                }
-            ]);
-          
-          if (aiError) console.error("Failed to save AI recommendations:", JSON.stringify(aiError, null, 2));
-      }
-
-      // 4. Return formatted object conforming to frontend types
-      return {
-        entry_id: entryData.id,
-        user_id: entryData.user_id,
-        timestamp: entryData.created_at,
-        progress_payload: {
-          inputs: entryData.input_data,
-          result: {
-              ...entryData.prediction_result,
-              aiAnalysis: result.aiAnalysis
+      // 3. Save to LocalStorage (Persistence)
+      const newEntry: ProgressEntry = {
+          entry_id: entryId,
+          user_id: userId,
+          timestamp: timestamp,
+          progress_payload: {
+              inputs: data,
+              result: result
           }
-        }
       };
+
+      const historyKey = LOCAL_STORAGE_KEY_PREFIX + userId;
+      const existingHistoryStr = localStorage.getItem(historyKey);
+      const existingHistory: ProgressEntry[] = existingHistoryStr ? JSON.parse(existingHistoryStr) : [];
+      
+      const updatedHistory = [newEntry, ...existingHistory]; // Prepend new entry
+      localStorage.setItem(historyKey, JSON.stringify(updatedHistory));
+
+      return newEntry;
+
   } catch (err) {
-      console.error("Unexpected error in saveProgress:", err);
+      console.error("Error saving progress:", err);
+      // We return null to indicate failure, though mostly this catches local storage errors
+      // since fetch no-cors rarely throws on network success.
       return null;
   }
 };
 
 /**
- * Retrieves progress history.
- * Fetches from 'progress_entries' and joins 'ai_recommendations'.
+ * Retrieves progress history from LocalStorage.
  */
 export const getProgressHistory = async (userId: string, sortDirection: 'asc' | 'desc' = 'desc'): Promise<ProgressEntry[]> => {
   if (!userId) return [];
 
-  const { data, error } = await supabase
-    .from('progress_entries')
-    .select(`
-        *,
-        ai_recommendations (
-            analysis_payload
-        )
-    `)
-    .eq('user_id', userId)
-    .order('created_at', { ascending: sortDirection === 'asc' });
+  try {
+      const historyStr = localStorage.getItem(LOCAL_STORAGE_KEY_PREFIX + userId);
+      if (!historyStr) return [];
 
-  if (error) {
-    handleDatabaseError(error, 'getProgressHistory');
-    return [];
+      let history: ProgressEntry[] = JSON.parse(historyStr);
+
+      // Sort
+      history.sort((a, b) => {
+          const dateA = new Date(a.timestamp).getTime();
+          const dateB = new Date(b.timestamp).getTime();
+          return sortDirection === 'asc' ? dateA - dateB : dateB - dateA;
+      });
+
+      return history;
+  } catch (e) {
+      console.error("Failed to load local history", e);
+      return [];
   }
-
-  return (data || []).map((row: any) => {
-    const aiData = row.ai_recommendations?.[0]?.analysis_payload;
-    const result = {
-        ...row.prediction_result,
-        aiAnalysis: aiData
-    };
-
-    return {
-        entry_id: row.id,
-        user_id: row.user_id,
-        timestamp: row.created_at,
-        progress_payload: {
-            inputs: row.input_data,
-            result: result
-        }
-    };
-  });
 };
 
 /**
- * Retrieves the most recent assessment.
+ * Retrieves the most recent assessment from LocalStorage.
  */
 export const getLatestProgress = async (userId: string): Promise<ProgressEntry | null> => {
     if (!userId) return null;
 
     try {
-        const { data, error } = await supabase
-        .from('progress_entries')
-        .select(`
-            *,
-            ai_recommendations (
-                analysis_payload
-            )
-        `)
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-
-        if (error) {
-            // PGRST116 is "No rows found" - not a system error
-            if (error.code === 'PGRST116') {
-                return null;
-            }
-            handleDatabaseError(error, 'getLatestProgress');
-            return null;
-        }
-
-        if (!data) return null;
-
-        const aiData = data.ai_recommendations?.[0]?.analysis_payload;
-        const result = {
-            ...data.prediction_result,
-            aiAnalysis: aiData
-        };
-
-        return {
-            entry_id: data.id,
-            user_id: data.user_id,
-            timestamp: data.created_at,
-            progress_payload: {
-                inputs: data.input_data,
-                result: result
-            }
-        };
+        const history = await getProgressHistory(userId, 'desc');
+        return history.length > 0 ? history[0] : null;
     } catch (err) {
         console.error("Critical failure in getLatestProgress:", err);
         return null;
@@ -195,51 +129,22 @@ export const getLatestProgress = async (userId: string): Promise<ProgressEntry |
 };
 
 /**
- * Retrieves the baseline (first ever) assessment.
+ * Retrieves the baseline (first ever) assessment from LocalStorage.
  */
 export const getBaselineProgress = async (userId: string): Promise<ProgressEntry | null> => {
     if (!userId) return null;
     
-    const { data, error } = await supabase
-      .from('progress_entries')
-      .select(`
-          *,
-          ai_recommendations (
-              analysis_payload
-          )
-      `)
-      .eq('user_id', userId)
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .single();
-
-    if (error) {
-        if (error.code === 'PGRST116') return null;
-        handleDatabaseError(error, 'getBaselineProgress');
+    try {
+        const history = await getProgressHistory(userId, 'asc');
+        return history.length > 0 ? history[0] : null;
+    } catch (err) {
+        console.error("Critical failure in getBaselineProgress:", err);
         return null;
     }
-    
-    if (!data) return null;
-
-    const aiData = data.ai_recommendations?.[0]?.analysis_payload;
-    const result = {
-        ...data.prediction_result,
-        aiAnalysis: aiData
-    };
-
-    return {
-        entry_id: data.id,
-        user_id: data.user_id,
-        timestamp: data.created_at,
-        progress_payload: {
-            inputs: data.input_data,
-            result: result
-        }
-    };
 };
 
 /**
- * Saves a chat log entry to 'chatbot_messages'.
+ * Saves a chat log entry to LocalStorage.
  */
 export const saveChatMessage = async (
     userId: string, 
@@ -247,51 +152,36 @@ export const saveChatMessage = async (
     content: string,
     sessionId?: string
 ) => {
-    if (!userId) return;
+    if (!userId || !sessionId) return;
     
     try {
-        // Ensure profile exists (best effort)
-        await supabase
-            .from('users_profile')
-            .upsert({ id: userId, updated_at: new Date().toISOString() }, { onConflict: 'id' });
-
-        const { error } = await supabase
-            .from('chatbot_messages')
-            .insert([{ 
-                user_id: userId, 
-                role, 
-                content,
-                session_id: sessionId || null 
-            }]);
+        const key = CHAT_STORAGE_KEY_PREFIX + userId + "_" + sessionId;
+        const existingStr = localStorage.getItem(key);
+        const messages = existingStr ? JSON.parse(existingStr) : [];
         
-        if (error) handleDatabaseError(error, 'saveChatMessage');
+        messages.push({
+            role,
+            content,
+            timestamp: new Date().toISOString()
+        });
+
+        localStorage.setItem(key, JSON.stringify(messages));
     } catch (e) {
         console.warn("Chat log save failed", e);
     }
 }
 
 /**
- * Fetches conversation history.
+ * Fetches conversation history from LocalStorage.
  */
 export const getChatHistory = async (userId: string, sessionId?: string, limit = 50) => {
-    if (!userId) return [];
+    if (!userId || !sessionId) return [];
 
-    let query = supabase
-        .from('chatbot_messages')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: true })
-        .limit(limit);
-
-    if (sessionId) {
-        query = query.eq('session_id', sessionId);
-    }
-
-    const { data, error } = await query;
-    
-    if (error) {
-        handleDatabaseError(error, 'getChatHistory');
+    try {
+        const key = CHAT_STORAGE_KEY_PREFIX + userId + "_" + sessionId;
+        const existingStr = localStorage.getItem(key);
+        return existingStr ? JSON.parse(existingStr) : [];
+    } catch (e) {
         return [];
     }
-    return data;
 }
